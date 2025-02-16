@@ -1,8 +1,9 @@
+
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 from sqlalchemy.orm import DeclarativeBase, Mapped, MappedColumn, relationship
-from sqlalchemy import ForeignKey, Table, String, Column, DateTime
+from sqlalchemy import ForeignKey, Table, String, Column,  Date
 from typing import List
 
 from flask import Flask, request, jsonify
@@ -55,7 +56,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = MappedColumn(Integer, primary_key=True)
-    order_date: Mapped[DateTime] = MappedColumn(DateTime)
+    order_date: Mapped[Date] = MappedColumn(Date)
     user_id: Mapped[int]= MappedColumn(ForeignKey("users.id"))
     
     
@@ -63,18 +64,18 @@ class Order(Base):
     owners: Mapped[List["User"]] = relationship(back_populates="orders")
 
     #Many-to-Many
-    ship_ready: Mapped[List["Order"]] = relationship(secondary= Order_Product)
+    ship_ready: Mapped[List["Product"]] = relationship(secondary= Order_Product , back_populates='shipments')
    
 
 class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = MappedColumn(Integer, primary_key = True)
-    product_name: Mapped[str] = MappedColumn(String(100))
+    product_name: Mapped[str] = MappedColumn(String(200))
     price: Mapped[float] = MappedColumn(Float)
 
     #Many-to-Many
-    shipments: Mapped[List["Product"]] = relationship(secondary= Order_Product)
+    shipments: Mapped[List["Order"]] = relationship(secondary= Order_Product, back_populates='ship_ready')
   
 
 #------Schemas------
@@ -86,6 +87,7 @@ class UserSchema(ma.SQLAlchemyAutoSchema):
 class OrderSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Order
+        include_fk = True
 
 class ProductSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
@@ -97,6 +99,7 @@ order_schema = OrderSchema()
 orders_schema = OrderSchema(many=True)
 product_schema = ProductSchema()
 products_schema = ProductSchema(many=True)
+
 
 #---------------Route----------------
 
@@ -160,6 +163,8 @@ def delete_user(id):
     db.session.commit()
     return jsonify({"message": f"succefully deleted user {id}"}), 200
 
+#--------------------Product----------------------
+
 #Create product
 @app.route('/products', methods=['POST'])
 def create_product():
@@ -173,6 +178,83 @@ def create_product():
     db.session.commit()
 
     return product_schema.jsonify(new_product), 201
+
+#Read all Product
+@app.route('/products', methods=['GET'])
+def get_products():
+    query = Select(Product)
+    products = db.session.execute(query).scalars().all()
+
+    return products_schema.jsonify(products), 200
+
+#Read a single product by ID
+@app.route('/products/<int:id>', methods=['GET'])
+def get_product(id):
+    product = db.session.get(Product, id)
+    return product_schema.jsonify(product), 200
+
+#Update User
+@app.route('/products/<int:id>', methods=['PUT'])
+def update_product(id):
+    product = db.session.get(Product, id)
+
+    if not product:
+        return jsonify({"message": "Invalid product id"}), 400
+    
+    try:
+        product_data = product_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify(e.messages), 400
+    
+    product.product_name = product_data['product_name']
+    product.price = product_data['price']
+    
+
+    db.session.commit()
+    return product_schema.jsonify(product), 200
+
+#Delete User
+@app.route('/products/<int:id>', methods=['DELETE'])
+def delete_product(id):
+    product = db.session.get(Product, id)
+
+    if not product:
+        return jsonify({"message": "Invalid product id"}), 400
+    
+    db.session.delete(product)
+    db.session.commit()
+    return jsonify({"message": f"succefully deleted product {id}"}), 200
+
+#-------------------------Order---------------------------
+
+#Create orders
+@app.route('/orders',  methods=['POST'])
+def create_order():
+    try:
+        order_data = order_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify(e.messages), 400
+    
+    new_order = Order(order_date = order_data['order_date'], user_id = order_data['user_id'])
+    db.session.add(new_order)
+    db.session.commit()
+
+    return order_schema.jsonify(new_order), 201
+
+#Add product to an order
+@app.route('/orders/<int:order_id>/add_product/<int:product_id>', methods=['POST'])
+def add_product(order_id, product_id):
+    
+    order = db.session.get(Order, order_id)
+    product = db.session.get(Product, product_id)
+
+    order.ship_ready.append(product)
+    db.session.commit()
+    return jsonify({"message": f"A shipment ordered {order.order_date} contains product(s){product.product_name}"}), 200
+
+
+
+
 
 if __name__ == "__main__":
 
